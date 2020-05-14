@@ -1,0 +1,329 @@
+---
+title: "DSO530 Final Project"
+author: "Ganesh Sreeram"
+date: "5/9/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Loading Packages
+
+```{r include=FALSE}
+#Loading Packages  
+
+library(lubridate)
+
+library(tidyr)
+
+library(tidyverse)
+
+library(fpp2)
+
+library(forecast)
+
+library(dplyr)
+
+library(lmtest)
+
+library(car)
+
+library(ggplot2)
+```
+
+
+#Loading data
+
+```{r}
+
+#LA art data 
+
+data = read_csv("LAart.csv")
+
+coupon = read_csv("coupon.csv")
+
+head(coupon)
+
+head(data, 10L)
+
+```
+
+```{r}
+#merging the two dataframes 
+
+#Creating a new column discount (1 = Customer got the 10% off email)
+
+data$discount = as.numeric(data$CustID %in% coupon$CustID) 
+
+data = as.data.frame(data)
+
+#Total Revenue 
+
+data$totalrev = data$Paintings + data$Jewelry +data$Mosaics + data$Sculpture
+
+#Total Commission 
+
+data$com = (data$Paintings*0.08) + (data$Jewelry*0.08) +(data$Mosaics*0.12) + (data$Sculpture*0.12)
+
+#gender dummy (1 = Female)
+
+data$gender = ifelse(data$Gender == "Female", 1,0)
+
+
+#Age 
+
+calc_age <- function(birthDate, refDate = Sys.Date()) {
+
+    require(lubridate)
+
+    period <- as.period(new_interval(birthDate, refDate),
+                        unit = "year")
+
+    period$year
+
+}
+
+data$age = calc_age(data$DOB)
+
+#Days since they joined 
+
+data$joined= calc_age(data$JoinDate)
+
+
+#Since the average visits is 55,  use 55 as a benchmark. Also looks like they are negatively correlated 
+
+mean(data$Visits)
+cor(data$totalrev,data$Visits)
+
+data$visit = ifelse(data$Visits>= 40,1,0)
+
+#Since there is a clear segregation in revenues. 
+
+data$rev_high = ifelse(data$totalrev >= 800,1,0)
+
+
+
+head(data)
+
+```
+
+#Exploring the Data
+
+```{r}
+#Split the Revenue 
+discounts = data$totalrev[which(data$discount == 1)]
+no_discounts = data$totalrev[which(data$discount == 0)]
+
+plot(discounts)
+
+plot(no_discounts)
+
+#Splitting data by discounts and gender
+
+male_discounts = data$totalrev[which(data$discount == 1 & data$gender == 0)]
+female_discounts = data$totalrev[which(data$discount == 1 & data$gender == 1)]
+
+plot(male_discounts)
+
+plot(female_discounts)
+
+
+#splitting data by disocunts and number of visits
+
+plot(x = data$Visits, y = data$totalrev, type = 'p')
+
+high_discounts = data$totalrev[which(data$discount == 1 & data$rev_high == 1)]
+
+low_discounts = data$totalrev[which(data$discount == 1 & data$rev_high == 0)]
+
+
+
+
+
+
+
+```
+
+
+
+**Testing if Revenue with discounts is better** 
+```{r}
+#Split the Revenue 
+discounts = data$totalrev[which(data$discount == 1)]
+no_discounts = data$totalrev[which(data$discount == 0)]
+
+#Visualizing 
+
+boxplot(totalrev ~ ,data = data)
+
+
+#testing equality in variances 
+
+var.test(discounts, no_discounts) #There is not significant differences in variances 
+
+#Start with two sample t-test and compare average Revenue with discounts and without discounts was introduced 
+
+#Ho: Discount program is not effective
+#Ha: Discount program is effective 
+
+#Ho: mu_discounts - mu_no_discounts < 0 
+#Ha: mu_discounts  - mu_no_discounts > 0 
+
+t.test(x = discounts, y= no_discounts, alternative = "greater", mu = 0, var.equal = TRUE)
+
+x = mean(discounts)
+y = mean(no_discounts)
+
+paste(round(((x - y)/ (x)) *100, 2),"%") #  Revenue from customers who got a disount is 5.35% less than those who did not get a discount
+
+#T-test using regression 
+
+
+#To fit a line (slope intercept model) y = beta0 + beta1*x1 + epsilon (mathematically)
+
+
+M1 = lm(totalrev~discount, data = data)   #Looks like discounts lead to lower revenues
+summary(M1)
+
+
+```
+
+
+
+
+
+```{r}
+
+#Split the Revenue based on gender
+
+discounts = data$com[which(data$discount == 1 & data$gender == 0) ]
+no_discounts = data$com[which(data$discount == 0 & data$gender == 0)]
+
+#Visualizing 
+
+boxplot(totalrev ~ gender,
+         data = data)
+
+
+#testing equality in variances 
+
+var.test(discounts, no_discounts) #There is significant differences in variances 
+
+#Start with two sample t-test and compare average Revenue with discounts and without discounts was introduced 
+
+#Ho: Discount program is not effective
+#Ha: Discount program is effective 
+
+#Ho: mu_discounts - mu_no_discounts < 0 
+#Ha: mu_discounts  - mu_no_discounts > 0 
+
+t.test(x = discounts, y= no_discounts, alternative = "greater", mu = 0, var.equal = FALSE)
+
+x = mean(discounts)
+y = mean(no_discounts)
+
+paste(round(((x - y)/ (x)) *100, 2),"%") #  Revenue from customers who got a disount is 5.35% less than those who did not get a discount
+
+#T-test using regression 
+
+
+#To fit a line (slope intercept model) y = beta0 + beta1*x1 + epsilon (mathematically)
+
+
+m1 = lm(totalrev~discount+gender+Visits+joined+age, data = data)   #Looks like discounts lead to lower revenues
+summary(m1)
+
+plot(residuals(m1))
+```
+
+```{r}
+#lineariy
+plot(x=fitted(m1), y=residuals(m1))
+abline(h=0)
+title(main= "Linearity")
+
+#2. Independence 
+
+#box.test 
+
+Box.test(residuals(m1))
+
+
+#3. Homoskedasticity 
+
+#BP test 
+
+bptest(m1)
+
+#H0: errors are homoskedastic
+#Ha: errors are heteroskedastic 
+
+#reject null if p < 0.05
+#In this case we fail to reject null. Thus, there is no heteroskedasticity 
+
+#4. Normality of residuals 
+
+shapiro.test(residuals(m1))
+
+qqnorm(residuals(m1))
+
+#since p-value is greater than 0.05, there is no reason to believe that the residuals are not normally distributed 
+
+# 5 Multicollinearity
+
+#VIF model 3 
+vif(m1)
+
+```
+
+
+
+```{r}
+
+pie(x = data$totalrev)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
